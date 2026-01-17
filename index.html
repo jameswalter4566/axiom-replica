@@ -1,5 +1,67 @@
 <!DOCTYPE html><html lang="en" class="dark"><head><meta charSet="utf-8"/>
+<style>
+  /* Hide signup/login UI elements to prevent flashing */
+  [class*="signup"], [class*="login"], [class*="onboard"], [class*="auth-modal"] {
+    display: none !important;
+  }
+  /* Hide modal overlays */
+  [role="dialog"], [class*="modal-overlay"], [class*="backdrop"]:not([class*="table"]) {
+    display: none !important;
+  }
+</style>
 <script>
+  // Hide signup/login buttons and modals
+  (function() {
+    function hideAuthElements() {
+      // Hide buttons with Sign up or Login text
+      document.querySelectorAll('button').forEach(btn => {
+        const text = btn.textContent || btn.innerText || '';
+        if (text.includes('Sign up') || text.includes('Login') || text.includes('Connect Wallet')) {
+          btn.style.display = 'none';
+        }
+      });
+      // Hide any dialogs/modals
+      document.querySelectorAll('[role="dialog"]').forEach(el => {
+        el.style.display = 'none';
+      });
+    }
+    // Run on load and observe for dynamically added elements
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', hideAuthElements);
+    } else {
+      hideAuthElements();
+    }
+    // Also run periodically to catch dynamically added elements
+    setInterval(hideAuthElements, 500);
+  })();
+
+  // Prevent URL navigation loops - ensure chain=sol is always present
+  (function() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('chain')) {
+      url.searchParams.set('chain', 'sol');
+      window.history.replaceState({}, '', url.toString());
+    }
+    // Prevent excessive reloads by tracking reload count
+    const reloadKey = 'axiom_reload_count';
+    const reloadTime = 'axiom_reload_time';
+    const now = Date.now();
+    const lastReload = parseInt(sessionStorage.getItem(reloadTime) || '0');
+    const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0');
+
+    if (now - lastReload < 2000) {
+      sessionStorage.setItem(reloadKey, (reloadCount + 1).toString());
+      if (reloadCount > 3) {
+        // Too many reloads, stop the loop
+        console.warn('Preventing reload loop');
+        window.location.reload = function() { console.warn('Reload blocked'); };
+      }
+    } else {
+      sessionStorage.setItem(reloadKey, '0');
+    }
+    sessionStorage.setItem(reloadTime, now.toString());
+  })();
+
   window.global = window;
 
   // API Proxy Configuration - Route API calls through our proxy
