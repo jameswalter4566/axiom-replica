@@ -97,18 +97,20 @@
     };
   })();
 
-  // GMGN API INTEGRATION - Redirect Axiom API calls to GMGN
+  // GMGN API INTEGRATION - Redirect Axiom API calls to backend GMGN proxy
   (function() {
-    const GMGN_BASE = 'https://gmgn.ai';
+    // Use the Railway backend as a CORS proxy for GMGN
+    const BACKEND_BASE = 'https://axiom-backend-production.up.railway.app';
+    const GMGN_PROXY = BACKEND_BASE + '/gmgn';
 
-    // Map Axiom endpoints to GMGN endpoints
+    // Map Axiom endpoints to GMGN endpoints (via backend proxy)
     const apiMapping = {
       // Trending tokens
       'meme-trending': '/defi/quotation/v1/rank/sol/swaps/1h?orderby=swaps&direction=desc',
       'new-trending': '/defi/quotation/v1/rank/sol/swaps/5m?orderby=swaps&direction=desc',
       // Pump live
       'pump-live-stream': '/defi/quotation/v1/rank/sol/pump?orderby=progress&direction=desc',
-      // Token info - will need address substitution
+      // Token info / lighthouse
       'lighthouse': '/defi/quotation/v1/rank/sol/swaps/1h?orderby=volume&direction=desc',
     };
 
@@ -118,42 +120,43 @@
       if (typeof url === 'string') {
         // Check if it's an Axiom backend API call
         if (url.includes('axiom-backend') || url.includes('/api') || url.includes('/cluster')) {
-          console.log('[GMGN Redirect] Original URL:', url);
+          console.log('[GMGN Proxy] Original URL:', url);
 
-          // Try to map to GMGN endpoint
+          // Try to map to GMGN endpoint via backend proxy
           for (const [key, gmgnPath] of Object.entries(apiMapping)) {
             if (url.includes(key)) {
-              const gmgnUrl = GMGN_BASE + gmgnPath;
-              console.log('[GMGN Redirect] Redirecting to:', gmgnUrl);
+              const proxyUrl = GMGN_PROXY + gmgnPath;
+              console.log('[GMGN Proxy] Redirecting to:', proxyUrl);
               try {
-                const response = await originalFetch.call(this, gmgnUrl, {
+                const response = await originalFetch.call(this, proxyUrl, {
                   ...options,
                   mode: 'cors',
                   credentials: 'omit'
                 });
-                return response;
+                if (response.ok) return response;
               } catch(e) {
-                console.log('[GMGN] Fetch error, trying direct:', e);
+                console.log('[GMGN Proxy] Fetch error:', e);
               }
             }
           }
 
-          // For unmapped endpoints, try GMGN's general API
+          // For unmapped endpoints, try the backend data endpoints
           const path = url.split('/').slice(-2).join('/');
-          if (path.includes('trending') || path.includes('tokens') || path.includes('rank')) {
-            const gmgnUrl = GMGN_BASE + '/defi/quotation/v1/rank/sol/swaps/1h?orderby=swaps&direction=desc';
-            console.log('[GMGN Redirect] Fallback to trending:', gmgnUrl);
+          if (path.includes('trending') || path.includes('tokens')) {
+            const proxyUrl = BACKEND_BASE + '/data/trending';
+            console.log('[GMGN Proxy] Fallback to /data/trending');
             try {
-              return await originalFetch.call(this, gmgnUrl, { mode: 'cors', credentials: 'omit' });
+              const response = await originalFetch.call(this, proxyUrl, { mode: 'cors' });
+              if (response.ok) return response;
             } catch(e) {
-              console.log('[GMGN] Fallback error:', e);
+              console.log('[GMGN Proxy] Fallback error:', e);
             }
           }
         }
 
-        // Direct GMGN API calls (for /api/, /defi/, etc.)
-        if (url.startsWith('/api/') || url.startsWith('/defi/') || url.startsWith('/vas/') || url.startsWith('/mrwapi/')) {
-          url = GMGN_BASE + url;
+        // Direct GMGN API calls - route through proxy
+        if (url.startsWith('/defi/') || url.startsWith('/vas/') || url.startsWith('/mrwapi/')) {
+          url = GMGN_PROXY + url;
         }
       }
       return originalFetch.call(this, url, options);
@@ -165,23 +168,23 @@
       if (typeof url === 'string') {
         if (url.includes('axiom-backend') || (url.startsWith('/') && url.includes('api'))) {
           console.log('[GMGN XHR] Original:', url);
-          // Map to GMGN trending endpoint
+          // Map to GMGN endpoint via backend proxy
           for (const [key, gmgnPath] of Object.entries(apiMapping)) {
             if (url.includes(key)) {
-              url = GMGN_BASE + gmgnPath;
+              url = GMGN_PROXY + gmgnPath;
               console.log('[GMGN XHR] Redirecting to:', url);
               break;
             }
           }
         }
-        if (url.startsWith('/api/') || url.startsWith('/defi/') || url.startsWith('/vas/') || url.startsWith('/mrwapi/')) {
-          url = GMGN_BASE + url;
+        if (url.startsWith('/defi/') || url.startsWith('/vas/') || url.startsWith('/mrwapi/')) {
+          url = GMGN_PROXY + url;
         }
       }
       return originalXHROpen.call(this, method, url, ...rest);
     };
 
-    console.log('[GMGN Integration] API intercept enabled');
+    console.log('[GMGN Integration] API intercept enabled (via backend proxy)');
   })();
 
   // Hide signup/login buttons and modals
