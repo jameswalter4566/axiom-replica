@@ -97,56 +97,65 @@
     };
   })();
 
-  // GMGN API INTEGRATION - Redirect Axiom API calls to backend GMGN proxy
+  // GMGN API INTEGRATION - Use backend /data/* endpoints for live token data
   (function() {
-    // Use the Railway backend as a CORS proxy for GMGN
     const BACKEND_BASE = 'https://axiom-backend-production.up.railway.app';
-    const GMGN_PROXY = BACKEND_BASE + '/gmgn';
 
-    // Map Axiom endpoints to GMGN endpoints (via backend proxy)
+    // Map Axiom API patterns to backend /data/* endpoints
     const apiMapping = {
-      // Trending tokens
-      'meme-trending': '/defi/quotation/v1/rank/sol/swaps/1h?orderby=swaps&direction=desc',
-      'new-trending': '/defi/quotation/v1/rank/sol/swaps/5m?orderby=swaps&direction=desc',
+      // Trending tokens (1h)
+      'meme-trending': '/data/trending?period=1h',
+      // New trending (5m)
+      'new-trending': '/data/trending?period=5m',
       // Pump live
-      'pump-live-stream': '/defi/quotation/v1/rank/sol/pump?orderby=progress&direction=desc',
-      // Token info / lighthouse
-      'lighthouse': '/defi/quotation/v1/rank/sol/swaps/1h?orderby=volume&direction=desc',
+      'pump-live-stream': '/data/pump',
+      'pump-live': '/data/pump',
+      // Volume / lighthouse
+      'lighthouse': '/data/volume',
+      'volume': '/data/volume',
     };
 
     // Intercept fetch API
     const originalFetch = window.fetch;
     window.fetch = async function(url, options = {}) {
       if (typeof url === 'string') {
-        // Check if it's an Axiom backend API call
+        // Check if it's an Axiom backend API call that we should redirect
         if (url.includes('axiom-backend') || url.includes('/api') || url.includes('/cluster')) {
-          console.log('[GMGN Proxy] Original URL:', url);
+          console.log('[GMGN] Intercepted:', url);
 
-          // Try to map to GMGN endpoint via backend proxy
-          for (const [key, gmgnPath] of Object.entries(apiMapping)) {
-            if (url.includes(key)) {
-              const proxyUrl = GMGN_PROXY + gmgnPath;
-              console.log('[GMGN Proxy] Redirecting to:', proxyUrl);
+          // Try to map to backend /data/* endpoint
+          for (const [key, dataPath] of Object.entries(apiMapping)) {
+            if (url.toLowerCase().includes(key.toLowerCase())) {
+              const proxyUrl = BACKEND_BASE + dataPath;
+              console.log('[GMGN] Redirecting to:', proxyUrl);
               try {
                 const response = await originalFetch.call(this, proxyUrl, {
-                  ...options,
+                  method: 'GET',
                   mode: 'cors',
-                  credentials: 'omit'
+                  credentials: 'omit',
+                  headers: { 'Accept': 'application/json' }
                 });
-                if (response.ok) return response;
+                if (response.ok) {
+                  console.log('[GMGN] Success:', proxyUrl);
+                  return response;
+                }
+                console.log('[GMGN] Response not ok:', response.status);
               } catch(e) {
-                console.log('[GMGN Proxy] Fetch error:', e);
+                console.log('[GMGN] Fetch error:', e.message);
               }
             }
           }
 
-          // For unmapped endpoints, try the backend data endpoints
-          const path = url.split('/').slice(-2).join('/');
-          if (path.includes('trending') || path.includes('tokens')) {
+          // Default fallback - try /data/trending for any token-related requests
+          if (url.includes('trending') || url.includes('tokens') || url.includes('rank')) {
             const proxyUrl = BACKEND_BASE + '/data/trending';
-            console.log('[GMGN Proxy] Fallback to /data/trending');
+            console.log('[GMGN] Fallback to:', proxyUrl);
             try {
-              const response = await originalFetch.call(this, proxyUrl, { mode: 'cors' });
+              const response = await originalFetch.call(this, proxyUrl, {
+                method: 'GET',
+                mode: 'cors',
+                credentials: 'omit'
+              });
               if (response.ok) return response;
             } catch(e) {
               console.log('[GMGN Proxy] Fallback error:', e);
