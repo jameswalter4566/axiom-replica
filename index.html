@@ -10,41 +10,71 @@
   }
 </style>
 <script>
-  // BLOCK ALL RELOADS IMMEDIATELY - This must run first
+  // BLOCK ALL RELOADS - Use meta refresh blocker and navigation interception
   (function() {
-    // Completely disable page reloads
-    const noop = function() { console.log('[Blocked] Page reload prevented'); return false; };
+    // Remove any meta refresh tags
+    document.querySelectorAll('meta[http-equiv="refresh"]').forEach(m => m.remove());
 
-    // Override location.reload
-    Object.defineProperty(window.location, 'reload', {
-      value: noop,
-      writable: false,
-      configurable: false
+    // Intercept beforeunload to prevent navigation
+    let allowNavigation = false;
+    window.addEventListener('beforeunload', function(e) {
+      if (!allowNavigation) {
+        console.log('[Blocked] Navigation/reload attempt');
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
     });
 
-    // Also catch location.href assignments that would cause reload
-    const originalHref = Object.getOwnPropertyDescriptor(window.location, 'href');
-    // We can't easily override href, but we can block assign
-    if (window.location.assign) {
-      window.location.assign = noop;
-    }
+    // Allow navigation only for user clicks on links
+    document.addEventListener('click', function(e) {
+      const link = e.target.closest('a');
+      if (link && link.href && !link.href.includes('javascript:')) {
+        allowNavigation = true;
+        setTimeout(() => { allowNavigation = false; }, 100);
+      }
+    }, true);
 
-    // Block "force-refresh" WebSocket messages
+    // Block WebSocket "force-refresh" messages
     const originalWS = window.WebSocket;
     window.WebSocket = function(url, protocols) {
-      const ws = new originalWS(url, protocols);
-      const originalOnMessage = null;
+      const ws = protocols ? new originalWS(url, protocols) : new originalWS(url);
 
-      ws.addEventListener('message', function(event) {
-        try {
-          const data = JSON.parse(event.data);
-          if (data && data.type === 'force-refresh') {
-            console.log('[Blocked] force-refresh WebSocket message');
-            event.stopImmediatePropagation();
-            return false;
-          }
-        } catch(e) {}
-      }, true);
+      const originalAddEventListener = ws.addEventListener.bind(ws);
+      ws.addEventListener = function(type, listener, options) {
+        if (type === 'message') {
+          const wrappedListener = function(event) {
+            try {
+              const data = JSON.parse(event.data);
+              if (data && (data.type === 'force-refresh' || data.action === 'reload')) {
+                console.log('[Blocked] WebSocket reload command');
+                return;
+              }
+            } catch(e) {}
+            return listener.call(this, event);
+          };
+          return originalAddEventListener(type, wrappedListener, options);
+        }
+        return originalAddEventListener(type, listener, options);
+      };
+
+      // Also intercept onmessage setter
+      let _onmessage = null;
+      Object.defineProperty(ws, 'onmessage', {
+        get: () => _onmessage,
+        set: (fn) => {
+          _onmessage = function(event) {
+            try {
+              const data = JSON.parse(event.data);
+              if (data && (data.type === 'force-refresh' || data.action === 'reload')) {
+                console.log('[Blocked] WebSocket reload command via onmessage');
+                return;
+              }
+            } catch(e) {}
+            return fn.call(this, event);
+          };
+        }
+      });
 
       return ws;
     };
@@ -53,6 +83,18 @@
     window.WebSocket.OPEN = originalWS.OPEN;
     window.WebSocket.CLOSING = originalWS.CLOSING;
     window.WebSocket.CLOSED = originalWS.CLOSED;
+
+    // Patch history to prevent reload-like navigation
+    const origPushState = history.pushState;
+    const origReplaceState = history.replaceState;
+    history.pushState = function(...args) {
+      console.log('[History] pushState:', args[2]);
+      return origPushState.apply(this, args);
+    };
+    history.replaceState = function(...args) {
+      console.log('[History] replaceState:', args[2]);
+      return origReplaceState.apply(this, args);
+    };
   })();
 
   // Hide signup/login buttons and modals
