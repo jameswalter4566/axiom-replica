@@ -10,56 +10,79 @@
   }
 </style>
 <script>
+  // BLOCK ALL RELOADS IMMEDIATELY - This must run first
+  (function() {
+    // Completely disable page reloads
+    const noop = function() { console.log('[Blocked] Page reload prevented'); return false; };
+
+    // Override location.reload
+    Object.defineProperty(window.location, 'reload', {
+      value: noop,
+      writable: false,
+      configurable: false
+    });
+
+    // Also catch location.href assignments that would cause reload
+    const originalHref = Object.getOwnPropertyDescriptor(window.location, 'href');
+    // We can't easily override href, but we can block assign
+    if (window.location.assign) {
+      window.location.assign = noop;
+    }
+
+    // Block "force-refresh" WebSocket messages
+    const originalWS = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+      const ws = new originalWS(url, protocols);
+      const originalOnMessage = null;
+
+      ws.addEventListener('message', function(event) {
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.type === 'force-refresh') {
+            console.log('[Blocked] force-refresh WebSocket message');
+            event.stopImmediatePropagation();
+            return false;
+          }
+        } catch(e) {}
+      }, true);
+
+      return ws;
+    };
+    window.WebSocket.prototype = originalWS.prototype;
+    window.WebSocket.CONNECTING = originalWS.CONNECTING;
+    window.WebSocket.OPEN = originalWS.OPEN;
+    window.WebSocket.CLOSING = originalWS.CLOSING;
+    window.WebSocket.CLOSED = originalWS.CLOSED;
+  })();
+
   // Hide signup/login buttons and modals
   (function() {
     function hideAuthElements() {
-      // Hide buttons with Sign up or Login text
       document.querySelectorAll('button').forEach(btn => {
         const text = btn.textContent || btn.innerText || '';
         if (text.includes('Sign up') || text.includes('Login') || text.includes('Connect Wallet')) {
           btn.style.display = 'none';
         }
       });
-      // Hide any dialogs/modals
       document.querySelectorAll('[role="dialog"]').forEach(el => {
         el.style.display = 'none';
       });
     }
-    // Run on load and observe for dynamically added elements
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', hideAuthElements);
     } else {
       hideAuthElements();
     }
-    // Also run periodically to catch dynamically added elements
     setInterval(hideAuthElements, 500);
   })();
 
-  // Prevent URL navigation loops - ensure chain=sol is always present
+  // Ensure chain=sol is always present
   (function() {
     const url = new URL(window.location.href);
     if (!url.searchParams.has('chain')) {
       url.searchParams.set('chain', 'sol');
       window.history.replaceState({}, '', url.toString());
     }
-    // Prevent excessive reloads by tracking reload count
-    const reloadKey = 'axiom_reload_count';
-    const reloadTime = 'axiom_reload_time';
-    const now = Date.now();
-    const lastReload = parseInt(sessionStorage.getItem(reloadTime) || '0');
-    const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0');
-
-    if (now - lastReload < 2000) {
-      sessionStorage.setItem(reloadKey, (reloadCount + 1).toString());
-      if (reloadCount > 3) {
-        // Too many reloads, stop the loop
-        console.warn('Preventing reload loop');
-        window.location.reload = function() { console.warn('Reload blocked'); };
-      }
-    } else {
-      sessionStorage.setItem(reloadKey, '0');
-    }
-    sessionStorage.setItem(reloadTime, now.toString());
   })();
 
   window.global = window;
